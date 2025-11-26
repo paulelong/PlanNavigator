@@ -38,6 +38,7 @@ const zoomInBtn = document.getElementById('zoom-in');
 const zoomOutBtn = document.getElementById('zoom-out');
 const zoomResetBtn = document.getElementById('zoom-reset');
 const thumbnailStrip = document.getElementById('thumbnail-strip');
+let linkOverlays = [];
 
 // Initialize PDF.js
 pdfjsLib.GlobalWorkerOptions.workerSrc = 'pdfjs/build/pdf.worker.js';
@@ -64,8 +65,18 @@ async function init() {
     // Generate thumbnails
     await generateThumbnails();
 
-    // Fit page to window and render first page
-    await fitPageToWindow(1);
+    // Fit page to window and render initial page from URL or first
+    const urlState = parseUrlState();
+    const startPage = urlState.page && urlState.page >= 1 && urlState.page <= totalPages ? urlState.page : 1;
+    await fitPageToWindow(startPage);
+
+    // If URL contains a tag/occurrence, try to jump there
+    if (urlState.tag && tagIndex.tags[urlState.tag]) {
+      const occIdx = typeof urlState.occ === 'number' ? urlState.occ : 0;
+      try {
+        await jumpToOccurrence(urlState.tag, occIdx);
+      } catch {}
+    }
 
     // Enable navigation buttons
     updateNavigationButtons();
@@ -227,6 +238,7 @@ async function jumpToOccurrence(tagName, occurrenceIndex) {
   
   // Navigate to page
   await renderPage(occurrence.page);
+  pushUrlState({ page: occurrence.page, tag: tagName, occ: occurrenceIndex });
   
   // Draw highlight overlay
   drawHighlight(occurrence.bbox);
@@ -279,6 +291,7 @@ async function generateThumbnails() {
     // Add click handler
     thumbItem.addEventListener('click', () => {
       renderPage(pageNum);
+      pushUrlState({ page: pageNum });
     });
     
     thumbnails.push(thumbItem);
@@ -463,6 +476,7 @@ async function renderPage(pageNum) {
   currentPageSpan.textContent = pageNum;
   updateNavigationButtons();
   updateThumbnailActive();
+  // Push state when user-driven navigation occurs (avoid duplicate pushes during popstate handling)
   
   // Clear any existing highlights
   clearHighlights();
@@ -479,6 +493,9 @@ async function renderPage(pageNum) {
   };
   
   await page.render(renderContext).promise;
+
+  // After rendering, overlay clickable links detected from text
+  await renderPageLinks(pageNum, page);
 }
 
 /**
@@ -526,6 +543,129 @@ function clearHighlights() {
   highlights.forEach(h => h.remove());
 }
 
+function clearLinkOverlays() {
+  linkOverlays.forEach(el => el.remove());
+  linkOverlays = [];
+}
+
+async function renderPageLinks(pageNum, pageObj) {
+  clearLinkOverlays();
+  try {
+    const page = pageObj || await pdfDoc.getPage(pageNum);
+    const viewport = page.getViewport({ scale: scale });
+    const content = await page.getTextContent();
+    const items = content.items || [];
+
+    // Match page refs like 09/AC401 (2 digits, slash, AC + 3-4 digits)
+    const refRegex = /\b(\d{2})\/(AC\d{3,4})\b/i;
+
+    for (let i = 0; i < items.length; i++) {
+      const item = items[i];
+      const str = item.str || '';
+      const match = str.match(refRegex);
+      if (!match) continue;
+
+      const refText = `${match[1]}/${match[2].toUpperCase()}`;
+
+      // Transform text matrix into viewport space
+      // item.transform is the text matrix; combine with viewport.transform to get pixel coords
+      const tm = item.transform;
+      const m = pdfjsLib.Util.transform(viewport.transform, tm); // [a, b, c, d, e, f]
+      const [a, b, c, d, e, f] = m;
+
+      // Text orientation and font size
+      const fontSize = Math.hypot(a, b);
+      const angleRad = Math.atan2(b, a); // rotation in radians
+      const angleDeg = Math.round(angleRad * 180 / Math.PI);
+      const isVertical = Math.abs(Math.abs(angleDeg) - 90) <= 10; // treat ~90° as vertical
+
+      // Compute width/height in viewport pixels
+      // Use character count * average char width (fontSize * 0.5 for monospace-like approximation)
+      const charWidth = fontSize * 0.5;
+      let width = refText.length * charWidth;
+      let height = fontSize;
+
+      // For vertical text, swap width/height and adjust position to cover the column
+      if (isVertical) {
+        const tmp = width;
+        width = height;
+        height = tmp;
+      }
+
+      // Position: e,f are the text origin in viewport space (baseline).
+      // Use canvas bounding rect to be robust to layout/padding/scroll.
+      const canvasRect = canvas.getBoundingClientRect();
+      const containerRect = canvasContainer.getBoundingClientRect();
+      const originLeft = canvasRect.left - containerRect.left;
+      const originTop = canvasRect.top - containerRect.top;
+
+      let left = originLeft + e;
+      let top = originTop + (f - height);
+
+      // For vertical text, shift box to better align along the glyph run
+      if (isVertical) {
+        // Nudge left slightly to center over rotated text; heuristic
+        left -= width * 0.25;
+        // Vertical text tends to report baseline mid-run; lift overlay more
+        top = originTop + (f - height * 0.9);
+      }
+
+      // Create overlay element
+      const overlay = document.createElement('div');
+      overlay.className = 'link-overlay';
+      overlay.style.position = 'absolute';
+      overlay.style.left = `${left}px`;
+      overlay.style.top = `${top}px`; // baseline -> top
+      overlay.style.width = `${width}px`;
+      overlay.style.height = `${height}px`;
+      overlay.style.border = '1px dashed rgba(0, 102, 204, 0.4)';
+      overlay.style.background = 'rgba(0, 102, 204, 0.05)';
+      overlay.style.cursor = 'pointer';
+      overlay.title = `Go to ${refText}`;
+
+      overlay.addEventListener('click', async () => {
+        const targetPage = resolveTargetPageForRef(refText);
+        if (targetPage) {
+          await renderPage(targetPage);
+          pushUrlState({ page: targetPage, tag: match[2].toUpperCase() });
+        }
+      });
+
+      canvasContainer.appendChild(overlay);
+      linkOverlays.push(overlay);
+    }
+  } catch (err) {
+    console.warn('renderPageLinks failed:', err);
+  }
+}
+
+function resolveTargetPageForRef(refText) {
+  // refText like "09/AC401" -> key by AC code to find page
+  if (!tagIndex || !tagIndex.tags) return null;
+  const acCodeMatch = refText.match(/AC\d{3,4}/i);
+  const acCode = acCodeMatch ? acCodeMatch[0].toUpperCase() : null;
+  if (!acCode) return null;
+
+  // Prefer a page whose AC label matches the code, else first occurrence of the tag
+  for (let pageNum = 1; pageNum <= totalPages; pageNum++) {
+    const label = pageLabels.get(pageNum);
+    if (label && label.toUpperCase() === acCode) {
+      return pageNum;
+    }
+  }
+  const occs = tagIndex.tags[refText] || tagIndex.tags[acCode];
+  if (occs && occs.length > 0) {
+    return occs[0].page;
+  }
+  // Fallback: search any tag whose name contains the AC code
+  for (const [tag, occs2] of Object.entries(tagIndex.tags)) {
+    if (tag.toUpperCase().includes(acCode)) {
+      return occs2[0]?.page || null;
+    }
+  }
+  return null;
+}
+
 /**
  * Update navigation button states
  */
@@ -545,12 +685,14 @@ function showError(message) {
 prevPageBtn.addEventListener('click', () => {
   if (currentPage > 1) {
     renderPage(currentPage - 1);
+    pushUrlState({ page: currentPage });
   }
 });
 
 nextPageBtn.addEventListener('click', () => {
   if (currentPage < totalPages) {
     renderPage(currentPage + 1);
+    pushUrlState({ page: currentPage });
   }
 });
 
@@ -574,8 +716,10 @@ zoomResetBtn.addEventListener('click', () => {
 document.addEventListener('keydown', (e) => {
   if (e.key === 'ArrowLeft' && currentPage > 1) {
     renderPage(currentPage - 1);
+    pushUrlState({ page: currentPage });
   } else if (e.key === 'ArrowRight' && currentPage < totalPages) {
     renderPage(currentPage + 1);
+    pushUrlState({ page: currentPage });
   }
 });
 
@@ -589,3 +733,44 @@ window.addEventListener('resize', () => {
 
 // Initialize the application
 init();
+
+// --- History and URL state management ---
+
+function pushUrlState(state) {
+  const params = new URLSearchParams();
+  if (state.page) params.set('page', String(state.page));
+  if (state.tag) params.set('tag', state.tag);
+  if (typeof state.occ === 'number') params.set('occ', String(state.occ));
+  const url = `${location.pathname}?${params.toString()}`;
+  history.pushState(state, '', url);
+}
+
+function parseUrlState() {
+  const params = new URLSearchParams(location.search);
+  const page = params.has('page') ? parseInt(params.get('page'), 10) : undefined;
+  const occ = params.has('occ') ? parseInt(params.get('occ'), 10) : undefined;
+  const tag = params.get('tag') || undefined;
+  return { page, occ, tag };
+}
+
+window.addEventListener('popstate', async (event) => {
+  const state = event.state || parseUrlState();
+  if (!pdfDoc) return;
+  const page = state.page && state.page >= 1 && state.page <= totalPages ? state.page : currentPage;
+  await renderPage(page);
+  if (state.tag && typeof state.occ === 'number' && tagIndex && tagIndex.tags[state.tag]) {
+    // Reapply highlight without pushing new history
+    const occurrence = tagIndex.tags[state.tag][state.occ];
+    if (occurrence) {
+      drawHighlight(occurrence.bbox);
+      selectedTag = state.tag;
+      currentOccurrenceIndex = state.occ;
+      renderInspector(state.tag);
+      // Mark current occurrence
+      const items = inspectorContent.querySelectorAll('.occurrence-item');
+      items.forEach((item, idx) => item.classList.toggle('current', idx === state.occ));
+    }
+  } else {
+    clearHighlights();
+  }
+});
