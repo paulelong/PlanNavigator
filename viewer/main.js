@@ -63,14 +63,30 @@ async function init() {
     
     // Generate thumbnails
     await generateThumbnails();
-    
-    // Render first page
-    await renderPage(1);
-    
+
+    // Fit page to window and render first page
+    await fitPageToWindow(1);
+
     // Enable navigation buttons
     updateNavigationButtons();
-    
-  } catch (error) {
+/**
+ * Fit the PDF page to the window (canvas container) and render it
+ */
+async function fitPageToWindow(pageNum) {
+  const page = await pdfDoc.getPage(pageNum);
+  // Get container size, accounting for padding (20px on each side = 40px total)
+  const padding = 40;
+  const containerWidth = canvasContainer.clientWidth - padding;
+  const containerHeight = canvasContainer.clientHeight - padding;
+  // Get unscaled page size
+  const unscaledViewport = page.getViewport({ scale: 1 });
+  // Calculate scale to fit
+  const scaleX = containerWidth / unscaledViewport.width;
+  const scaleY = containerHeight / unscaledViewport.height;
+  scale = Math.min(scaleX, scaleY);
+  // Render page with new scale
+  await renderPage(pageNum);
+}  } catch (error) {
     console.error('Initialization error:', error);
     showError('Failed to load PDF or index. Check console for details.');
   }
@@ -560,6 +576,14 @@ document.addEventListener('keydown', (e) => {
     renderPage(currentPage - 1);
   } else if (e.key === 'ArrowRight' && currentPage < totalPages) {
     renderPage(currentPage + 1);
+  }
+});
+
+
+// Re-fit page on window resize
+window.addEventListener('resize', () => {
+  if (pdfDoc) {
+    fitPageToWindow(currentPage);
   }
 });
 
