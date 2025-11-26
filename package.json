@@ -1,0 +1,22 @@
+{
+    "name": "plan-navigator",
+    "version": "1.0.0",
+    "description": "Interactive PDF navigator for construction plan tags",
+    "main": "viewer/main.js",
+    "scripts": {
+        "start": "http-server . -p 8080 -o /viewer/index.html --cors",
+        "install-server": "npm install -g http-server"
+    },
+    "keywords": [
+        "pdf",
+        "navigator",
+        "construction",
+        "plans",
+        "viewer"
+    ],
+    "author": "Paul",
+    "license": "MIT",
+    "devDependencies": {
+        "http-server": "^14.1.1"
+    }
+}
