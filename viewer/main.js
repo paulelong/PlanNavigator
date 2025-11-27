@@ -338,7 +338,7 @@ function updateThumbnailActive() {
 /**
  * Render a PDF page on the canvas
  */
-async function renderPage(pageNum) {
+async function renderPage(pageNum, maintainScrollRatio = null) {
   currentPage = pageNum;
   currentPageSpan.textContent = pageNum;
   updateNavigationButtons();
@@ -351,8 +351,18 @@ async function renderPage(pageNum) {
   const page = await pdfDoc.getPage(pageNum);
   const viewport = page.getViewport({ scale: scale });
   
+  // Store old canvas dimensions if we're maintaining scroll
+  const oldWidth = canvas.width;
+  const oldHeight = canvas.height;
+  
   canvas.width = viewport.width;
   canvas.height = viewport.height;
+  
+  // If maintainScrollRatio is provided, adjust scroll position immediately
+  if (maintainScrollRatio) {
+    canvasContainer.scrollLeft = maintainScrollRatio.x * viewport.width - maintainScrollRatio.offsetX;
+    canvasContainer.scrollTop = maintainScrollRatio.y * viewport.height - maintainScrollRatio.offsetY;
+  }
   
   const renderContext = {
     canvasContext: ctx,
@@ -550,6 +560,56 @@ document.addEventListener('keydown', (e) => {
   }
 });
 
+// Mouse wheel zoom
+canvasContainer.addEventListener('wheel', (e) => {
+  e.preventDefault();
+  
+  // Get canvas and container rectangles
+  const canvasRect = canvas.getBoundingClientRect();
+  const containerRect = canvasContainer.getBoundingClientRect();
+  
+  // Get current canvas dimensions
+  const oldCanvasWidth = canvas.width;
+  const oldCanvasHeight = canvas.height;
+  
+  // Get current scroll position
+  const scrollLeft = canvasContainer.scrollLeft;
+  const scrollTop = canvasContainer.scrollTop;
+  
+  // Mouse position relative to the actual canvas element (not container)
+  const mouseCanvasX = e.clientX - canvasRect.left;
+  const mouseCanvasY = e.clientY - canvasRect.top;
+  
+  // Calculate the ratio of where the mouse is pointing on the canvas
+  // This is the position as a fraction of the canvas size (0 to 1)
+  const ratioX = mouseCanvasX / oldCanvasWidth;
+  const ratioY = mouseCanvasY / oldCanvasHeight;
+  
+  // Mouse position relative to container viewport
+  const mouseContainerX = e.clientX - containerRect.left;
+  const mouseContainerY = e.clientY - containerRect.top;
+  
+  // Store old scale
+  const oldScale = scale;
+  
+  // deltaY > 0 means scrolling down (zoom out)
+  // deltaY < 0 means scrolling up (zoom in)
+  if (e.deltaY < 0) {
+    // Zoom in
+    scale *= 1.1;
+  } else {
+    // Zoom out
+    scale /= 1.1;
+  }
+  
+  // Render page with new scale, passing the ratio to maintain
+  renderPage(currentPage, {
+    x: ratioX,
+    y: ratioY,
+    offsetX: mouseContainerX,
+    offsetY: mouseContainerY
+  });
+}, { passive: false });
 
 // Re-fit page on window resize
 window.addEventListener('resize', () => {
