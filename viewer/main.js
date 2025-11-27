@@ -9,12 +9,14 @@
 // When served from project root, use absolute paths from "/"
 // Place your PDF in the project root next to index.json
 const PDF_FILE = '/2024_05_24 90_ CD Set.pdf'; // Change if your filename differs
+const INDEX_FILE = '/index.json';
 
 // Global state
 let pdfDoc = null;
 let currentPage = 1;
 let totalPages = 0;
 let scale = 1.5;
+let tagIndex = null;
 // Cache of page -> AC label
 const pageLabels = new Map();
 
@@ -40,6 +42,10 @@ pdfjsLib.GlobalWorkerOptions.workerSrc = 'pdfjs/build/pdf.worker.js';
  */
 async function init() {
   try {
+    // Load tag index
+    tagIndex = await loadIndex();
+    console.log('Loaded index:', tagIndex);
+    
     // Load PDF
     pdfDoc = await pdfjsLib.getDocument(PDF_FILE).promise;
     totalPages = pdfDoc.numPages;
@@ -57,6 +63,17 @@ async function init() {
 
     // Enable navigation buttons
     updateNavigationButtons();
+/**
+ * Load the tag index from JSON file
+ */
+async function loadIndex() {
+  const response = await fetch(INDEX_FILE);
+  if (!response.ok) {
+    throw new Error(`Failed to load ${INDEX_FILE}`);
+  }
+  return await response.json();
+}
+
 /**
  * Fit the PDF page to the window (canvas container) and render it
  */
@@ -94,6 +111,23 @@ async function loadIndex() {
 /**
  * Render the tag list in the sidebar
  */
+/**
+ * Jump to the first occurrence of a tag
+ */
+async function jumpToTag(tagName) {
+  if (!tagIndex || !tagIndex.tags || !tagIndex.tags[tagName]) {
+    console.warn('Tag not found:', tagName);
+    return;
+  }
+  
+  const occurrences = tagIndex.tags[tagName];
+  if (occurrences.length > 0) {
+    const firstOccurrence = occurrences[0];
+    await renderPage(firstOccurrence.page);
+    pushUrlState({ page: firstOccurrence.page });
+  }
+}
+
 /**
  * Generate thumbnails for all pages
  */
@@ -448,6 +482,21 @@ function resolveTargetPageForRef(refText) {
       return pageNum;
     }
   }
+  
+  // Fallback: use tagIndex if available
+  if (tagIndex && tagIndex.tags) {
+    const occs = tagIndex.tags[refText] || tagIndex.tags[acCode];
+    if (occs && occs.length > 0) {
+      return occs[0].page;
+    }
+    // Search any tag whose name contains the AC code
+    for (const [tag, occs2] of Object.entries(tagIndex.tags)) {
+      if (tag.toUpperCase().includes(acCode)) {
+        return occs2[0]?.page || null;
+      }
+    }
+  }
+  
   return null;
 }
 
