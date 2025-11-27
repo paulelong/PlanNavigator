@@ -1,11 +1,11 @@
 # Plan Navigator
 
-Interactive PDF navigator for construction plan documents. Extracts and navigates tags like `01/AC501`, `03/AC602` from PDF files.
+Interactive PDF navigator for construction plan documents with clickable cross-references between plan sheets.
 
 ## Features
 
-- **Python Extraction Tool**: Scans PDFs for tags and generates a searchable index
-- **Interactive Web Viewer**: Browse tags, view occurrences, and jump to locations
+- **Interactive Web Viewer**: Navigate PDF plans with thumbnail strip and clickable cross-references
+- **Python Extraction Tool**: Scans PDFs for tags (for potential future enhancements)
 - **PDF Annotation Tool**: Create clickable links in the PDF itself
 - **VSCode Integration**: Tasks and launch configurations for development
 
@@ -102,18 +102,6 @@ Copy-Item "C:\path\to\2024_05_24 90_ CD Set.pdf" .
 
 ## Usage
 
-### Extract Tags from PDF
-
-```powershell
-# Make sure virtual environment is activated
-.\.venv\Scripts\Activate.ps1
-
-# Run extraction
-.\.venv\Scripts\python.exe tools\extract_tags.py "2024_05_24 90_ CD Set.pdf"
-
-# This creates index.json in the project root
-```
-
 ### Start the Web Viewer
 
 ```powershell
@@ -126,9 +114,28 @@ http-server viewer -p 8080 -o --cors
 # The viewer will open in your browser at http://localhost:8080
 ```
 
-**Important:** Update the PDF filename in `viewer\main.js` (line 10) if your PDF has a different name:
+**Important:** Update the PDF filename in `viewer\main.js` (line 9) if your PDF has a different name:
 ```javascript
-const PDF_FILE = 'your-pdf-filename.pdf';
+const PDF_FILE = '/your-pdf-filename.pdf';
+```
+
+The viewer now displays:
+- **Thumbnail strip** at the top showing all pages with AC labels
+- **Main PDF canvas** with zoom controls and page navigation
+- **Clickable cross-references** - any reference like "09/AC401" in the PDF is automatically clickable and will navigate to that sheet
+
+### Extract Tags from PDF (Optional)
+
+This tool is available if you want to generate a tag index for future enhancements:
+
+```powershell
+# Make sure virtual environment is activated
+.\.venv\Scripts\Activate.ps1
+
+# Run extraction
+.\.venv\Scripts\python.exe tools\extract_tags.py "2024_05_24 90_ CD Set.pdf"
+
+# This creates index.json in the project root
 ```
 
 ### Create Annotated PDF (Optional)
@@ -159,11 +166,11 @@ Press `F5` or use the Debug panel to run:
 ## Quick Start Runbook
 
 ```powershell
-# 1. Create and activate virtual environment
+# 1. Create and activate virtual environment (optional - only needed for Python tools)
 python -m venv .venv
 .\.venv\Scripts\Activate.ps1
 
-# 2. Install Python dependencies
+# 2. Install Python dependencies (optional)
 .\.venv\Scripts\python.exe -m pip install -r requirements.txt
 
 # 3. Download PDF.js (manual or git - see instructions above)
@@ -173,16 +180,13 @@ python -m venv .venv
 npm install -g http-server
 
 # 5. Place your PDF in the project root
-# Update viewer\main.js line 10 with your PDF filename
+# Update viewer\main.js line 9 with your PDF filename
 
-# 6. Extract tags
-.\.venv\Scripts\python.exe tools\extract_tags.py "2024_05_24 90_ CD Set.pdf"
-
-# 7. Start viewer
+# 6. Start viewer
 npm start
 
 # The viewer opens at http://localhost:8080
-# Click tags in the left sidebar to navigate the PDF
+# Use thumbnails, page navigation buttons, or click cross-references in the PDF
 ```
 
 ## Troubleshooting

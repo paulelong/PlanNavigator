@@ -9,16 +9,12 @@
 // When served from project root, use absolute paths from "/"
 // Place your PDF in the project root next to index.json
 const PDF_FILE = '/2024_05_24 90_ CD Set.pdf'; // Change if your filename differs
-const INDEX_FILE = '/index.json';
 
 // Global state
 let pdfDoc = null;
 let currentPage = 1;
 let totalPages = 0;
 let scale = 1.5;
-let tagIndex = null;
-let selectedTag = null;
-let currentOccurrenceIndex = null;
 // Cache of page -> AC label
 const pageLabels = new Map();
 
@@ -26,10 +22,6 @@ const pageLabels = new Map();
 const canvas = document.getElementById('pdf-canvas');
 const ctx = canvas.getContext('2d');
 const canvasContainer = document.getElementById('canvas-container');
-const tagList = document.getElementById('tag-list');
-const tagSearch = document.getElementById('tag-search');
-const inspectorContent = document.getElementById('inspector-content');
-const inspectorTitle = document.getElementById('inspector-title');
 const currentPageSpan = document.getElementById('current-page');
 const totalPagesSpan = document.getElementById('total-pages');
 const prevPageBtn = document.getElementById('prev-page');
@@ -48,13 +40,6 @@ pdfjsLib.GlobalWorkerOptions.workerSrc = 'pdfjs/build/pdf.worker.js';
  */
 async function init() {
   try {
-    // Load tag index
-    tagIndex = await loadIndex();
-    console.log('Loaded index:', tagIndex);
-    
-    // Render tag list
-    renderTagList(tagIndex.tags);
-    
     // Load PDF
     pdfDoc = await pdfjsLib.getDocument(PDF_FILE).promise;
     totalPages = pdfDoc.numPages;
@@ -69,14 +54,6 @@ async function init() {
     const urlState = parseUrlState();
     const startPage = urlState.page && urlState.page >= 1 && urlState.page <= totalPages ? urlState.page : 1;
     await fitPageToWindow(startPage);
-
-    // If URL contains a tag/occurrence, try to jump there
-    if (urlState.tag && tagIndex.tags[urlState.tag]) {
-      const occIdx = typeof urlState.occ === 'number' ? urlState.occ : 0;
-      try {
-        await jumpToOccurrence(urlState.tag, occIdx);
-      } catch {}
-    }
 
     // Enable navigation buttons
     updateNavigationButtons();
@@ -99,7 +76,7 @@ async function fitPageToWindow(pageNum) {
   await renderPage(pageNum);
 }  } catch (error) {
     console.error('Initialization error:', error);
-    showError('Failed to load PDF or index. Check console for details.');
+    alert('Failed to load PDF. Check console for details.');
   }
 }
 
@@ -117,133 +94,6 @@ async function loadIndex() {
 /**
  * Render the tag list in the sidebar
  */
-function renderTagList(tags) {
-  const tagNames = Object.keys(tags).sort();
-  
-  if (tagNames.length === 0) {
-    tagList.innerHTML = '<div class="loading">No tags found</div>';
-    return;
-  }
-  
-  tagList.innerHTML = '';
-  
-  tagNames.forEach(tagName => {
-    const occurrences = tags[tagName];
-    const tagItem = document.createElement('div');
-    tagItem.className = 'tag-item';
-    tagItem.dataset.tag = tagName;
-    
-    tagItem.innerHTML = `
-      <div class="tag-name">${tagName}</div>
-      <div class="tag-count">${occurrences.length} occurrence${occurrences.length !== 1 ? 's' : ''}</div>
-    `;
-    
-    tagItem.addEventListener('click', () => selectTag(tagName));
-    tagList.appendChild(tagItem);
-  });
-}
-
-/**
- * Filter tag list based on search input
- */
-tagSearch.addEventListener('input', (e) => {
-  const searchTerm = e.target.value.toLowerCase();
-  const tagItems = tagList.querySelectorAll('.tag-item');
-  
-  tagItems.forEach(item => {
-    const tagName = item.dataset.tag.toLowerCase();
-    if (tagName.includes(searchTerm)) {
-      item.style.display = 'block';
-    } else {
-      item.style.display = 'none';
-    }
-  });
-});
-
-/**
- * Select a tag and show its occurrences
- */
-function selectTag(tagName) {
-  selectedTag = tagName;
-  currentOccurrenceIndex = null;
-  
-  // Update tag list UI
-  const tagItems = tagList.querySelectorAll('.tag-item');
-  tagItems.forEach(item => {
-    if (item.dataset.tag === tagName) {
-      item.classList.add('active');
-    } else {
-      item.classList.remove('active');
-    }
-  });
-  
-  // Update inspector
-  renderInspector(tagName);
-
-  // Automatically jump to the first occurrence of this tag for quick navigation
-  // Only do this if the PDF is loaded
-  if (pdfDoc) {
-    const occurrences = tagIndex.tags[tagName];
-    if (occurrences && occurrences.length > 0) {
-      jumpToOccurrence(tagName, 0);
-    }
-  }
-}
-
-/**
- * Render the inspector panel with tag occurrences
- */
-function renderInspector(tagName) {
-  const occurrences = tagIndex.tags[tagName];
-  
-  inspectorTitle.textContent = `Tag: ${tagName}`;
-  inspectorContent.innerHTML = '';
-  
-  occurrences.forEach((occurrence, index) => {
-    const occurrenceItem = document.createElement('div');
-    occurrenceItem.className = 'occurrence-item';
-    occurrenceItem.dataset.index = index;
-    
-    occurrenceItem.innerHTML = `
-      <div class="occurrence-page">Page ${occurrence.page}</div>
-      <div class="occurrence-snippet">${occurrence.snippet}</div>
-    `;
-    
-    occurrenceItem.addEventListener('click', () => {
-      jumpToOccurrence(tagName, index);
-    });
-    
-    inspectorContent.appendChild(occurrenceItem);
-  });
-}
-
-/**
- * Jump to a specific tag occurrence
- */
-async function jumpToOccurrence(tagName, occurrenceIndex) {
-  const occurrences = tagIndex.tags[tagName];
-  const occurrence = occurrences[occurrenceIndex];
-  
-  currentOccurrenceIndex = occurrenceIndex;
-  
-  // Update inspector UI
-  const occurrenceItems = inspectorContent.querySelectorAll('.occurrence-item');
-  occurrenceItems.forEach((item, index) => {
-    if (index === occurrenceIndex) {
-      item.classList.add('current');
-    } else {
-      item.classList.remove('current');
-    }
-  });
-  
-  // Navigate to page
-  await renderPage(occurrence.page);
-  pushUrlState({ page: occurrence.page, tag: tagName, occ: occurrenceIndex });
-  
-  // Draw highlight overlay
-  drawHighlight(occurrence.bbox);
-}
-
 /**
  * Generate thumbnails for all pages
  */
@@ -277,7 +127,7 @@ async function generateThumbnails() {
     }).promise;
     
     // Derive AC label from page text (prefer bottom-right title block)
-    const acTag = await getPageAcLabel(pageNum) || getPrimaryTagForPage(pageNum);
+    const acTag = await getPageAcLabel(pageNum);
     
     // Create label with page number and AC tag
     const label = document.createElement('div');
@@ -302,23 +152,6 @@ async function generateThumbnails() {
   thumbnails.forEach(thumb => thumbnailStrip.appendChild(thumb));
   
   console.log(`Generated ${thumbnails.length} thumbnails`);
-}
-
-/**
- * Get the primary tag for a given page (the first tag found on that page)
- */
-function getPrimaryTagForPage(pageNum) {
-  if (!tagIndex || !tagIndex.tags) return null;
-  
-  // Find the first tag that has an occurrence on this page
-  for (const [tagName, occurrences] of Object.entries(tagIndex.tags)) {
-    const hasPageOccurrence = occurrences.some(occ => occ.page === pageNum);
-    if (hasPageOccurrence) {
-      return tagName;
-    }
-  }
-  
-  return null;
 }
 
 /**
@@ -499,43 +332,6 @@ async function renderPage(pageNum) {
 }
 
 /**
- * Draw a highlight overlay on the canvas
- */
-function drawHighlight(bbox) {
-  // Remove any existing highlights
-  clearHighlights();
-  
-  // Get current page to calculate viewport
-  pdfDoc.getPage(currentPage).then(page => {
-    const viewport = page.getViewport({ scale: scale });
-    
-    // Transform PDF coordinates to canvas coordinates
-    const x = bbox.x0 * scale;
-    const y = bbox.y0 * scale;
-    const width = (bbox.x1 - bbox.x0) * scale;
-    const height = (bbox.y1 - bbox.y0) * scale;
-    
-    // Create highlight overlay
-    const highlight = document.createElement('div');
-    highlight.className = 'highlight-overlay';
-    highlight.style.left = `${x}px`;
-    highlight.style.top = `${y}px`;
-    highlight.style.width = `${width}px`;
-    highlight.style.height = `${height}px`;
-    
-    canvasContainer.appendChild(highlight);
-    
-    // Scroll to make highlight visible
-    const highlightRect = highlight.getBoundingClientRect();
-    const containerRect = canvasContainer.getBoundingClientRect();
-    
-    if (highlightRect.top < containerRect.top || highlightRect.bottom > containerRect.bottom) {
-      highlight.scrollIntoView({ behavior: 'smooth', block: 'center' });
-    }
-  });
-}
-
-/**
  * Clear all highlight overlays
  */
 function clearHighlights() {
@@ -641,26 +437,15 @@ async function renderPageLinks(pageNum, pageObj) {
 
 function resolveTargetPageForRef(refText) {
   // refText like "09/AC401" -> key by AC code to find page
-  if (!tagIndex || !tagIndex.tags) return null;
   const acCodeMatch = refText.match(/AC\d{3,4}/i);
   const acCode = acCodeMatch ? acCodeMatch[0].toUpperCase() : null;
   if (!acCode) return null;
 
-  // Prefer a page whose AC label matches the code, else first occurrence of the tag
+  // Search through page labels to find a matching AC code
   for (let pageNum = 1; pageNum <= totalPages; pageNum++) {
     const label = pageLabels.get(pageNum);
     if (label && label.toUpperCase() === acCode) {
       return pageNum;
-    }
-  }
-  const occs = tagIndex.tags[refText] || tagIndex.tags[acCode];
-  if (occs && occs.length > 0) {
-    return occs[0].page;
-  }
-  // Fallback: search any tag whose name contains the AC code
-  for (const [tag, occs2] of Object.entries(tagIndex.tags)) {
-    if (tag.toUpperCase().includes(acCode)) {
-      return occs2[0]?.page || null;
     }
   }
   return null;
@@ -672,13 +457,6 @@ function resolveTargetPageForRef(refText) {
 function updateNavigationButtons() {
   prevPageBtn.disabled = currentPage <= 1;
   nextPageBtn.disabled = currentPage >= totalPages;
-}
-
-/**
- * Show error message
- */
-function showError(message) {
-  tagList.innerHTML = `<div class="error">${message}</div>`;
 }
 
 // Event listeners for navigation
@@ -739,8 +517,6 @@ init();
 function pushUrlState(state) {
   const params = new URLSearchParams();
   if (state.page) params.set('page', String(state.page));
-  if (state.tag) params.set('tag', state.tag);
-  if (typeof state.occ === 'number') params.set('occ', String(state.occ));
   const url = `${location.pathname}?${params.toString()}`;
   history.pushState(state, '', url);
 }
@@ -748,9 +524,7 @@ function pushUrlState(state) {
 function parseUrlState() {
   const params = new URLSearchParams(location.search);
   const page = params.has('page') ? parseInt(params.get('page'), 10) : undefined;
-  const occ = params.has('occ') ? parseInt(params.get('occ'), 10) : undefined;
-  const tag = params.get('tag') || undefined;
-  return { page, occ, tag };
+  return { page };
 }
 
 window.addEventListener('popstate', async (event) => {
@@ -758,19 +532,5 @@ window.addEventListener('popstate', async (event) => {
   if (!pdfDoc) return;
   const page = state.page && state.page >= 1 && state.page <= totalPages ? state.page : currentPage;
   await renderPage(page);
-  if (state.tag && typeof state.occ === 'number' && tagIndex && tagIndex.tags[state.tag]) {
-    // Reapply highlight without pushing new history
-    const occurrence = tagIndex.tags[state.tag][state.occ];
-    if (occurrence) {
-      drawHighlight(occurrence.bbox);
-      selectedTag = state.tag;
-      currentOccurrenceIndex = state.occ;
-      renderInspector(state.tag);
-      // Mark current occurrence
-      const items = inspectorContent.querySelectorAll('.occurrence-item');
-      items.forEach((item, idx) => item.classList.toggle('current', idx === state.occ));
-    }
-  } else {
-    clearHighlights();
-  }
+  clearHighlights();
 });
